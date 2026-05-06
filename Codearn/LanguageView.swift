@@ -110,9 +110,36 @@ struct InteractiveLessonView: View {
                         .padding()
                     }
                     
-                    VStack {
+                    VStack(spacing: 0) {
                         Divider()
-                        nextButton.padding()
+                        HStack(spacing: 12) {
+                            // Back button — only show after step 1
+                            if currentStep > 0 {
+                                Button {
+                                    goBack()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "chevron.left")
+                                            .font(.system(size: 13, weight: .bold))
+                                        Text("Back")
+                                            .bold()
+                                    }
+                                    .padding()
+                                    .frame(width: 100)
+                                    .background(AppTheme.surface(isDarkMode: isDarkMode))
+                                    .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(AppTheme.buttonBorder(isDarkMode: isDarkMode), lineWidth: 1)
+                                    )
+                                }
+                                .transition(.opacity.combined(with: .move(edge: .leading)))
+                            }
+                            nextButton
+                        }
+                        .padding()
+                        .animation(.spring(response: 0.3), value: currentStep)
                     }
                 }
             }
@@ -361,6 +388,16 @@ struct InteractiveLessonView: View {
             isCorrect = false
             showExplanation = false
         }
+    }
+
+    func goBack() {
+        guard currentStep > 0 else { return }
+        currentStep -= 1
+        selectedChoice = nil
+        fillAnswer = ""
+        answered = false
+        isCorrect = false
+        showExplanation = false
     }
     
     var completionView: some View {
@@ -1534,40 +1571,65 @@ private let swiftUIAdventureNodes: [SwiftUIAdventureNode] = [
 
 struct SwiftUIAdventureEntryView: View {
     @Binding var progress: SwiftUIAdventureProgress
-    
+
     var body: some View {
         NavigationLink(destination: SwiftUIAdventureMapView(progress: $progress)) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Adventure Map")
-                            .font(.title3.bold())
+                // Header row — Swift: neon pink/coral, feels like Xcode on fire
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 48, height: 48)
+                        Image(systemName: "swift")
+                            .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
-                        Text("Train, earn XP, and clear boss fights.")
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("SwiftUI Adventure")
+                                .font(.title3.bold())
+                                .foregroundStyle(.white)
+                            Text("XCODE")
+                                .font(.system(.caption2, design: .monospaced, weight: .bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.18))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                        Text("Preview it. Build it. Ship to the App Store.")
                             .font(.subheadline)
                             .foregroundStyle(Color.white.opacity(0.82))
                     }
+
                     Spacer()
-                    Image(systemName: "arcade.stick.and.button")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(.white)
                 }
-                
+
+                // Stat pills
                 HStack(spacing: 10) {
                     adventureStatPill(title: "XP", value: "\(progress.xp)")
-                    adventureStatPill(title: "Streak", value: "\(progress.streak)")
-                    adventureStatPill(title: "Badges", value: "\(progress.badges.count)")
+                    adventureStatPill(title: "Stages", value: "\(swiftUIAdventureNodes.count)")
+                    adventureStatPill(title: "Bosses", value: "\(swiftUIAdventureNodes.filter(\.isBoss).count)")
                 }
-                
-                Text(progress.currentNodeIndex >= swiftUIAdventureNodes.count ? "Campaign complete" : "Next stop: \(swiftUIAdventureNodes[min(progress.currentNodeIndex, swiftUIAdventureNodes.count - 1)].title)")
-                    .font(.caption.bold())
-                    .foregroundStyle(Color.white.opacity(0.92))
+
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.caption.bold())
+                    Text(progress.currentNodeIndex >= swiftUIAdventureNodes.count
+                         ? "Campaign complete"
+                         : "Next stop: \(swiftUIAdventureNodes[min(progress.currentNodeIndex, swiftUIAdventureNodes.count - 1)].title)")
+                }
+                .font(.caption.bold())
+                .foregroundStyle(Color.white.opacity(0.92))
             }
             .padding(18)
             .frame(maxWidth: languageDropdownMaxWidth)
             .background(
+                // Swift: hot coral-to-pink, like SwiftUI animations in production
                 LinearGradient(
-                    colors: [Color(red: 0.13, green: 0.14, blue: 0.35), Color(red: 0.86, green: 0.19, blue: 0.51)],
+                    colors: [Color(red: 0.55, green: 0.05, blue: 0.22), Color(red: 0.95, green: 0.32, blue: 0.18)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -1575,13 +1637,13 @@ struct SwiftUIAdventureEntryView: View {
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .overlay(
                 RoundedRectangle(cornerRadius: 22)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
             )
-            .shadow(color: Color.pink.opacity(0.25), radius: 14, y: 8)
+            .shadow(color: Color.pink.opacity(0.4), radius: 16, y: 8)
         }
         .buttonStyle(.plain)
     }
-    
+
     private func adventureStatPill(title: String, value: String) -> some View {
         VStack(spacing: 4) {
             Text(value)
@@ -2326,44 +2388,112 @@ private func adventureStages(for language: String) -> [LanguageAdventureStage] {
 struct LanguageAdventureEntryView: View {
     let language: String
     @Binding var progress: LanguageAdventureProgress
-    
+
     private var stages: [LanguageAdventureStage] {
         adventureStages(for: language)
     }
-    
+
+    // Per-language hacker identity
+    private var cardConfig: (gradient: [Color], glow: Color, icon: String, tag: String, subtitle: String) {
+        switch language {
+        case "Java":
+            // Java: hot amber/orange — like a furnace compiling bytecode
+            return (
+                gradient: [Color(red: 0.55, green: 0.22, blue: 0.00), Color(red: 0.90, green: 0.46, blue: 0.00)],
+                glow: Color.orange,
+                icon: "cup.and.heat.waves.fill",
+                tag: "JVM",
+                subtitle: "Compile, run, conquer the bytecode path."
+            )
+        case "Python":
+            // Python: electric violet/indigo — snake magic
+            return (
+                gradient: [Color(red: 0.22, green: 0.00, blue: 0.48), Color(red: 0.54, green: 0.17, blue: 0.89)],
+                glow: Color.purple,
+                icon: "apple.terminal.fill",
+                tag: "PY3",
+                subtitle: "Write less. Break things. Fix them elegantly."
+            )
+        case "HTML":
+            // HTML: deep teal/cyan — web signal from the browser
+            return (
+                gradient: [Color(red: 0.00, green: 0.32, blue: 0.38), Color(red: 0.00, green: 0.76, blue: 0.65)],
+                glow: Color.cyan,
+                icon: "chevron.left.forwardslash.chevron.right",
+                tag: "HTML5",
+                subtitle: "Tag it. Ship it. Rule the browser."
+            )
+        default:
+            return (
+                gradient: [Color(red: 0.08, green: 0.20, blue: 0.42), Color(red: 0.0, green: 0.67, blue: 0.71)],
+                glow: Color.blue,
+                icon: "gamecontroller.fill",
+                tag: "CODE",
+                subtitle: "Earn XP, clear lessons, and beat boss fights."
+            )
+        }
+    }
+
     var body: some View {
+        let config = cardConfig
         NavigationLink(destination: LanguageAdventureMapView(language: language, progress: $progress)) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(language) Adventure")
-                            .font(.title3.bold())
+                // Header row
+                HStack(spacing: 12) {
+                    // Glowing icon badge
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 48, height: 48)
+                        Image(systemName: config.icon)
+                            .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
-                        Text("Earn XP, clear lessons, and beat boss fights.")
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("\(language) Adventure")
+                                .font(.title3.bold())
+                                .foregroundStyle(.white)
+                            Text(config.tag)
+                                .font(.system(.caption2, design: .monospaced, weight: .bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.18))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                        Text(config.subtitle)
                             .font(.subheadline)
                             .foregroundStyle(Color.white.opacity(0.82))
                     }
+
                     Spacer()
-                    Image(systemName: "gamecontroller.fill")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(.white)
                 }
-                
+
+                // Stat pills
                 HStack(spacing: 10) {
                     adventureEntryPill(title: "XP", value: "\(progress.xp)")
                     adventureEntryPill(title: "Stages", value: "\(stages.count)")
                     adventureEntryPill(title: "Bosses", value: "\(stages.filter(\.isBoss).count)")
                 }
-                
-                Text(progress.currentStageIndex >= stages.count ? "Campaign complete" : "Next stop: \(stages[min(progress.currentStageIndex, stages.count - 1)].title)")
-                    .font(.caption.bold())
-                    .foregroundStyle(Color.white.opacity(0.92))
+
+                // Next stop
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.caption.bold())
+                    Text(progress.currentStageIndex >= stages.count
+                         ? "Campaign complete"
+                         : "Next stop: \(stages[min(progress.currentStageIndex, stages.count - 1)].title)")
+                }
+                .font(.caption.bold())
+                .foregroundStyle(Color.white.opacity(0.92))
             }
             .padding(18)
             .frame(maxWidth: languageDropdownMaxWidth)
             .background(
                 LinearGradient(
-                    colors: [Color(red: 0.08, green: 0.2, blue: 0.42), Color(red: 0.0, green: 0.67, blue: 0.71)],
+                    colors: config.gradient,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -2371,13 +2501,13 @@ struct LanguageAdventureEntryView: View {
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .overlay(
                 RoundedRectangle(cornerRadius: 22)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
             )
-            .shadow(color: Color.blue.opacity(0.18), radius: 14, y: 8)
+            .shadow(color: config.glow.opacity(0.35), radius: 16, y: 8)
         }
         .buttonStyle(.plain)
     }
-    
+
     private func adventureEntryPill(title: String, value: String) -> some View {
         VStack(spacing: 4) {
             Text(value)
@@ -2604,55 +2734,119 @@ struct LanguageView: View {
                 AppTheme.background(isDarkMode: isDarkMode)
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    DisclosureGroup(isExpanded: $javaExpanded) {
-                        LanguageAdventureEntryView(language: "Java", progress: $javaProgress)
-                    } label: {
-                        Text("Java").font(.title).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode)).padding(.vertical, 10)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        hackerLanguageRow(
+                            label: "Java",
+                            icon: "cup.and.heat.waves.fill",
+                            isExpanded: $javaExpanded
+                        ) {
+                            LanguageAdventureEntryView(language: "Java", progress: $javaProgress)
+                                .padding(.bottom, 14)
+                        }
+
+                        hackerDivider
+
+                        hackerLanguageRow(
+                            label: "Swift UI",
+                            icon: "swift",
+                            isExpanded: $swiftExpanded
+                        ) {
+                            SwiftUIAdventureEntryView(progress: $swiftUIProgress)
+                                .padding(.bottom, 14)
+                        }
+
+                        hackerDivider
+
+                        hackerLanguageRow(
+                            label: "Python",
+                            icon: "apple.terminal.fill",
+                            isExpanded: $pythonExpanded
+                        ) {
+                            LanguageAdventureEntryView(language: "Python", progress: $pythonProgress)
+                                .padding(.bottom, 14)
+                        }
+
+                        hackerDivider
+
+                        hackerLanguageRow(
+                            label: "HTML",
+                            icon: "chevron.left.forwardslash.chevron.right",
+                            isExpanded: $htmlExpanded
+                        ) {
+                            LanguageAdventureEntryView(language: "HTML", progress: $htmlProgress)
+                                .padding(.bottom, 14)
+                        }
+
+                        hackerDivider
                     }
-                    .frame(maxWidth: languageDropdownMaxWidth)
-                    .padding(.horizontal)
-                    .accentColor(AppTheme.text(isDarkMode: isDarkMode))
-                    
-                    Divider().frame(maxWidth: languageDropdownMaxWidth)
-                    
-                    DisclosureGroup(isExpanded: $swiftExpanded) {
-                        SwiftUIAdventureEntryView(progress: $swiftUIProgress)
-                    } label: {
-                        Text("Swift UI").font(.title).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode)).padding(.vertical, 10)
-                    }
-                    .frame(maxWidth: languageDropdownMaxWidth)
-                    .padding(.horizontal)
-                    .accentColor(AppTheme.text(isDarkMode: isDarkMode))
-                    
-                    Divider().frame(maxWidth: languageDropdownMaxWidth)
-                    
-                    DisclosureGroup(isExpanded: $pythonExpanded) {
-                        LanguageAdventureEntryView(language: "Python", progress: $pythonProgress)
-                    } label: {
-                        Text("Python").font(.title).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode)).padding(.vertical, 10)
-                    }
-                    .frame(maxWidth: languageDropdownMaxWidth)
-                    .padding(.horizontal)
-                    .accentColor(AppTheme.text(isDarkMode: isDarkMode))
-                    
-                    Divider().frame(maxWidth: languageDropdownMaxWidth)
-                    
-                    DisclosureGroup(isExpanded: $htmlExpanded) {
-                        LanguageAdventureEntryView(language: "HTML", progress: $htmlProgress)
-                    } label: {
-                        Text("HTML").font(.title).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode)).padding(.vertical, 10)
-                    }
-                    .frame(maxWidth: languageDropdownMaxWidth)
-                    .padding(.horizontal)
-                    .accentColor(AppTheme.text(isDarkMode: isDarkMode))
-                    
-                    Divider().frame(maxWidth: languageDropdownMaxWidth)
-                    
-                    Spacer()
+                    .padding(.top, 8)
                 }
             }
             .navigationTitle("Languages")
+        }
+    }
+
+    // MARK: - Hacker helpers
+
+    private var hackerDivider: some View {
+        Rectangle()
+            .fill(AppTheme.accent(isDarkMode: isDarkMode).opacity(0.25))
+            .frame(maxWidth: languageDropdownMaxWidth, maxHeight: 1)
+            .padding(.horizontal)
+    }
+
+    private func hackerLanguageRow<Content: View>(
+        label: String,
+        icon: String,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                    isExpanded.wrappedValue.toggle()
+                }
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(AppTheme.accent(isDarkMode: isDarkMode).opacity(0.10))
+                            .frame(width: 42, height: 42)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(AppTheme.accent(isDarkMode: isDarkMode).opacity(0.45), lineWidth: 1)
+                            )
+                        Image(systemName: icon)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(AppTheme.accent(isDarkMode: isDarkMode))
+                    }
+
+                    Text(label)
+                        .font(.system(.title2, design: .monospaced, weight: .bold))
+                        .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AppTheme.accent(isDarkMode: isDarkMode).opacity(0.7))
+                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                        .animation(.spring(response: 0.3), value: isExpanded.wrappedValue)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .frame(maxWidth: languageDropdownMaxWidth)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded.wrappedValue {
+                content()
+                    .padding(.horizontal, 20)
+                    .frame(maxWidth: languageDropdownMaxWidth)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 }
