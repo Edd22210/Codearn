@@ -2,6 +2,8 @@ import SwiftUI
 
 struct MenuView: View {
     @AppStorage("isDarkMode") private var isDarkMode = false
+    @AppStorage("hasSeenTutorial") private var hasSeenTutorial = false
+    @State private var showTutorial = false
     var userName: String
 
     var body: some View {
@@ -22,13 +24,6 @@ struct MenuView: View {
                     } label: {
                         menuButtonLabel("Coding Languages")
                     }
-
-                    NavigationLink {
-                        AccountView(userName: userName)
-                    } label: {
-                        menuButtonLabel("Account")
-                    }
-
                     NavigationLink {
                         SettingsView()
                     } label: {
@@ -37,7 +32,29 @@ struct MenuView: View {
 
                     Spacer()
                 }
+
+                // Tutorial overlay shown on first launch
+                if showTutorial {
+                    TutorialOverlayView(isPresented: $showTutorial)
+                        .zIndex(10)
+                        .onChange(of: showTutorial) { _, newVal in
+                            if !newVal { hasSeenTutorial = true }
+                        }
+                }
             }
+        }
+        .onAppear {
+            if !hasSeenTutorial {
+                // Small delay so the view is fully rendered first
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    withAnimation { showTutorial = true }
+                }
+            }
+        }
+        // Allow SettingsView to trigger the tutorial replay
+        .onReceive(NotificationCenter.default.publisher(for: .replayTutorial)) { _ in
+            hasSeenTutorial = false
+            withAnimation { showTutorial = true }
         }
     }
 
@@ -55,6 +72,10 @@ struct MenuView: View {
                 .font(.title2)
         }
     }
+}
+
+extension Notification.Name {
+    static let replayTutorial = Notification.Name("replayTutorial")
 }
 
 
