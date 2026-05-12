@@ -25,6 +25,12 @@ struct MenuView: View {
                         menuButtonLabel("Coding Languages")
                     }
                     NavigationLink {
+                        CertificatesView(userName: userName)
+                    } label: {
+                        menuButtonLabel("Certificates")
+                    }
+                    
+                    NavigationLink {
                         SettingsView()
                     } label: {
                         menuButtonLabel("Settings")
@@ -70,6 +76,99 @@ struct MenuView: View {
             Text(title)
                 .foregroundStyle(.white)
                 .font(.title2)
+        }
+    }
+}
+
+struct CertificatesView: View {
+    let userName: String
+    @AppStorage("isDarkMode") private var isDarkMode = false
+    @State private var refreshID = UUID()
+    
+    var body: some View {
+        ZStack {
+            AppTheme.background(isDarkMode: isDarkMode)
+                .ignoresSafeArea()
+            
+            ScrollView {
+                VStack(spacing: 16) {
+                    ForEach(CertificateProgressStore.languages, id: \.self) { language in
+                        certificateCard(for: language)
+                    }
+                }
+                .padding()
+                .id(refreshID)
+            }
+        }
+        .navigationTitle("Certificates")
+        .onAppear {
+            refreshID = UUID()
+        }
+    }
+    
+    private func certificateCard(for language: String) -> some View {
+        let earned = CertificateProgressStore.isCertificateEarned(language: language)
+        let completedChallenges = CertificateProgressStore.completedChallengeCount(language: language)
+        let totalChallenges = CertificateProgressStore.totalChallengeCount(language: language)
+        let bossCompleted = CertificateProgressStore.isBossCompleted(language: language)
+        
+        return VStack(spacing: 14) {
+            HStack {
+                Image(systemName: earned ? "rosette" : "lock.fill")
+                    .font(.title)
+                    .foregroundStyle(earned ? .yellow : .gray)
+                Spacer()
+                Text(earned ? "EARNED" : "LOCKED")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background((earned ? Color.green : Color.gray).opacity(0.16))
+                    .foregroundStyle(earned ? .green : .gray)
+                    .clipShape(Capsule())
+            }
+            
+            VStack(spacing: 6) {
+                Text("Certificate of Completion")
+                    .font(.title2.bold())
+                Text(language)
+                    .font(.system(.title, design: .monospaced, weight: .bold))
+                    .foregroundStyle(earned ? .blue : AppTheme.text(isDarkMode: isDarkMode).opacity(0.7))
+                Text(earned ? "Awarded to \(displayName)" : "Complete every challenge and clear the language boss to unlock.")
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode).opacity(0.75))
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                progressRow(title: "Challenges", isComplete: completedChallenges == totalChallenges && totalChallenges > 0, value: "\(completedChallenges)/\(totalChallenges)")
+                progressRow(title: "Boss", isComplete: bossCompleted, value: bossCompleted ? "Cleared" : "Needed")
+            }
+            .padding(.top, 4)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity)
+        .background(AppTheme.surface(isDarkMode: isDarkMode))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(earned ? Color.yellow.opacity(0.7) : AppTheme.buttonBorder(isDarkMode: isDarkMode), lineWidth: earned ? 2 : 1)
+        )
+    }
+    
+    private var displayName: String {
+        userName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Codearn Student" : userName
+    }
+    
+    private func progressRow(title: String, isComplete: Bool, value: String) -> some View {
+        HStack {
+            Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isComplete ? .green : .gray)
+            Text(title)
+                .font(.subheadline.bold())
+            Spacer()
+            Text(value)
+                .font(.caption.bold())
+                .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode).opacity(0.75))
         }
     }
 }
