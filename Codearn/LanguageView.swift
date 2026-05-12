@@ -35,6 +35,60 @@ struct CodingChallenge: Identifiable {
     let testCases: [String] // descriptions of what correct output looks like
 }
 
+struct CertificateProgressStore {
+    static let languages = ["Java", "Swift UI", "Python", "HTML"]
+    private static let completedChallengesKey = "completedChallengeIDs"
+    private static let completedBossesKey = "completedBossLanguages"
+    
+    static func completeChallenge(language: String, challengeTitle: String) {
+        insert(challengeID(language: language, title: challengeTitle), into: completedChallengesKey)
+    }
+    
+    static func completeBoss(language: String) {
+        insert(language, into: completedBossesKey)
+    }
+    
+    static func isChallengeCompleted(language: String, challengeTitle: String) -> Bool {
+        values(for: completedChallengesKey).contains(challengeID(language: language, title: challengeTitle))
+    }
+    
+    static func isBossCompleted(language: String) -> Bool {
+        values(for: completedBossesKey).contains(language)
+    }
+    
+    static func completedChallengeCount(language: String) -> Int {
+        ChallengesView(language: language).challenges.filter {
+            isChallengeCompleted(language: language, challengeTitle: $0.title)
+        }.count
+    }
+    
+    static func totalChallengeCount(language: String) -> Int {
+        ChallengesView(language: language).challenges.count
+    }
+    
+    static func isCertificateEarned(language: String) -> Bool {
+        let challenges = ChallengesView(language: language).challenges
+        guard !challenges.isEmpty else { return false }
+        return isBossCompleted(language: language) && challenges.allSatisfy {
+            isChallengeCompleted(language: language, challengeTitle: $0.title)
+        }
+    }
+    
+    private static func challengeID(language: String, title: String) -> String {
+        "\(language)::\(title)"
+    }
+    
+    private static func values(for key: String) -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+    }
+    
+    private static func insert(_ value: String, into key: String) {
+        var currentValues = values(for: key)
+        currentValues.insert(value)
+        UserDefaults.standard.set(Array(currentValues), forKey: key)
+    }
+}
+
 // MARK: - Interactive Lesson View
 
 struct InteractiveLessonView: View {
@@ -70,6 +124,53 @@ struct InteractiveLessonView: View {
         case .fillBlank:
             return currentStep == lesson.steps.count - 1 ? .check : .task
         }
+    }
+    
+    private var lessonPhases: [LessonPhase] {
+        var phases: [LessonPhase] = []
+        
+        if lesson.steps.contains(where: { step in
+            if case .info(_, _, _, nil) = step { return true }
+            return false
+        }) {
+            phases.append(.explain)
+        }
+        
+        if lesson.steps.contains(where: { step in
+            if case .info(_, _, _, .some) = step { return true }
+            return false
+        }) {
+            phases.append(.example)
+        }
+        
+        if lesson.steps.indices.contains(where: { index in
+            guard index < lesson.steps.count - 1 else { return false }
+            switch lesson.steps[index] {
+            case .multipleChoice, .fillBlank:
+                return true
+            case .info:
+                return false
+            }
+        }) {
+            phases.append(.task)
+        }
+        
+        if lesson.steps.contains(where: { step in
+            switch step {
+            case .multipleChoice, .fillBlank:
+                return true
+            case .info:
+                return false
+            }
+        }) {
+            phases.append(.check)
+        }
+        
+        return phases
+    }
+    
+    private var currentPhaseIndex: Int {
+        lessonPhases.firstIndex(of: currentPhase) ?? 0
     }
     
     var body: some View {
@@ -278,7 +379,7 @@ struct InteractiveLessonView: View {
     
     var phaseTracker: some View {
         HStack(spacing: 10) {
-            ForEach(Array(LessonPhase.allCases.enumerated()), id: \.offset) { index, phase in
+            ForEach(Array(lessonPhases.enumerated()), id: \.offset) { index, phase in
                 VStack(spacing: 6) {
                     Text("\(index + 1)")
                         .font(.caption.bold())
@@ -288,7 +389,7 @@ struct InteractiveLessonView: View {
                         .clipShape(Circle())
                     Text(title(for: phase))
                         .font(.caption2.bold())
-                        .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode).opacity(currentPhase.rawValue >= phase.rawValue ? 0.9 : 0.45))
+                        .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode).opacity(index <= currentPhaseIndex ? 0.9 : 0.45))
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -309,11 +410,15 @@ struct InteractiveLessonView: View {
     }
     
     private func phaseBackground(for phase: LessonPhase) -> Color {
-        currentPhase.rawValue >= phase.rawValue ? .blue : Color.gray.opacity(0.2)
+        phaseIndex(for: phase) <= currentPhaseIndex ? .blue : Color.gray.opacity(0.2)
     }
     
     private func phaseForeground(for phase: LessonPhase) -> Color {
-        currentPhase.rawValue >= phase.rawValue ? .white : .gray
+        phaseIndex(for: phase) <= currentPhaseIndex ? .white : .gray
+    }
+    
+    private func phaseIndex(for phase: LessonPhase) -> Int {
+        lessonPhases.firstIndex(of: phase) ?? Int.max
     }
     
     func lessonCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -426,6 +531,8 @@ struct InteractiveLessonView: View {
 
 struct CodingChallengeDetailView: View {
     let challenge: CodingChallenge
+    let language: String?
+    let marksBossCompletion: Bool
     var onComplete: (() -> Void)? = nil
     
     @AppStorage("isDarkMode") private var isDarkMode = false
@@ -434,6 +541,8 @@ struct CodingChallengeDetailView: View {
     @State private var showHints = false
     @State private var currentHint = 0
     @State private var submitted = false
+    @State private var submissionPassed = false
+    @State private var submissionMessage = ""
     @Environment(\.dismiss) private var dismiss
     
     var difficultyColor: Color {
@@ -444,8 +553,10 @@ struct CodingChallengeDetailView: View {
         }
     }
     
-    init(challenge: CodingChallenge, onComplete: (() -> Void)? = nil) {
+    init(challenge: CodingChallenge, language: String? = nil, marksBossCompletion: Bool = false, onComplete: (() -> Void)? = nil) {
         self.challenge = challenge
+        self.language = language
+        self.marksBossCompletion = marksBossCompletion
         self.onComplete = onComplete
         _userCode = State(initialValue: challenge.starterCode)
     }
@@ -501,6 +612,8 @@ struct CodingChallengeDetailView: View {
                             Button {
                                 userCode = challenge.starterCode
                                 submitted = false
+                                submissionPassed = false
+                                submissionMessage = ""
                                 showSolution = false
                             } label: {
                                 Label("Reset", systemImage: "arrow.counterclockwise")
@@ -551,26 +664,27 @@ struct CodingChallengeDetailView: View {
                 
                     // Submit / Solution buttons
                     Button {
-                        submitted = true
-                        onComplete?()
+                        submitChallenge()
                     } label: {
                         Text("Submit Solution")
                             .bold().frame(maxWidth: .infinity).padding()
                             .background(Color.blue).foregroundStyle(.white)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(userCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 
                     if submitted {
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                                Text("Nice work submitting! Run your code in Xcode or a playground to verify the output matches above.")
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: submissionPassed ? "checkmark.seal.fill" : "xmark.octagon.fill")
+                                    .foregroundStyle(submissionPassed ? .green : .red)
+                                Text(submissionMessage)
                                     .font(.callout)
                                     .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
                             }
                         }
                         .padding()
-                        .background(Color.green.opacity(0.1))
+                        .background((submissionPassed ? Color.green : Color.red).opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                 
@@ -602,6 +716,68 @@ struct CodingChallengeDetailView: View {
         }
         .navigationTitle("Challenge")
         .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private func submitChallenge() {
+        submitted = true
+        let result = validateChallengeCode(userCode)
+        submissionPassed = result.isValid
+        submissionMessage = result.message
+        
+        if result.isValid {
+            if let language {
+                CertificateProgressStore.completeChallenge(language: language, challengeTitle: challenge.title)
+                if marksBossCompletion {
+                    CertificateProgressStore.completeBoss(language: language)
+                }
+            }
+            onComplete?()
+        }
+    }
+    
+    private func validateChallengeCode(_ code: String) -> (isValid: Bool, message: String) {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else {
+            return (false, "Write your solution before submitting.")
+        }
+        
+        guard normalizedChallengeCode(trimmedCode) != normalizedChallengeCode(challenge.starterCode) else {
+            return (false, "This still matches the starter code. Add your solution before submitting.")
+        }
+        
+        let submittedCode = normalizedChallengeCode(trimmedCode)
+        let missingLines = requiredSolutionLines().filter { requiredLine in
+            !submittedCode.contains(normalizedChallengeCode(requiredLine))
+        }
+        
+        guard missingLines.isEmpty else {
+            let firstMissingLine = missingLines[0]
+            return (false, "Not clear yet. Check your code for: \(firstMissingLine)")
+        }
+        
+        return (true, "Correct! Boss cleared and reward earned.")
+    }
+    
+    private func requiredSolutionLines() -> [String] {
+        challenge.solutionCode
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in
+                guard !line.isEmpty else { return false }
+                guard line != "{" && line != "}" && line != "};" else { return false }
+                guard !line.hasPrefix("//") && !line.hasPrefix("# ") else { return false }
+                guard !line.hasPrefix("public class ") else { return false }
+                guard !line.hasPrefix("public static void main") else { return false }
+                guard !line.hasPrefix("struct ") else { return false }
+                guard !line.hasPrefix("var body:") else { return false }
+                guard !line.hasPrefix("<!DOCTYPE") else { return false }
+                guard line != "<html>" && line != "</html>" && line != "<head>" && line != "</head>" && line != "<body>" && line != "</body>" else { return false }
+                return true
+            }
+    }
+    
+    private func normalizedChallengeCode(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
     }
 }
 
@@ -891,7 +1067,7 @@ struct ChallengesView: View {
     
     var body: some View {
         List(challenges) { challenge in
-            NavigationLink(destination: CodingChallengeDetailView(challenge: challenge)) {
+            NavigationLink(destination: CodingChallengeDetailView(challenge: challenge, language: language)) {
                 HStack(spacing: 14) {
                     Image(systemName: challenge.icon)
                         .font(.title2)
@@ -2224,6 +2400,9 @@ struct SwiftUIAdventureMissionView: View {
     
     private func finishMission(message: String) {
         progress.complete(node: node, index: index, totalNodeCount: swiftUIAdventureNodes.count)
+        if node.isBoss {
+            CertificateProgressStore.completeBoss(language: "Swift UI")
+        }
         feedback = "\(message) +\(node.xpReward) XP earned."
         feedbackColor = .green
         showFeedback = true
@@ -2556,7 +2735,7 @@ struct LanguageAdventureMapView: View {
                         .padding(.horizontal, 4)
                     
                     ForEach(Array(stages.enumerated()), id: \.element.id) { stageIndex, stage in
-                        NavigationLink(destination: LanguageAdventureStageView(stage: stage, index: stageIndex, totalStageCount: stages.count, progress: $progress)) {
+                        NavigationLink(destination: LanguageAdventureStageView(language: language, stage: stage, index: stageIndex, totalStageCount: stages.count, progress: $progress)) {
                             genericStageCard(stage: stage, index: stageIndex)
                         }
                         .buttonStyle(.plain)
@@ -2696,6 +2875,7 @@ struct LanguageAdventureMapView: View {
 }
 
 struct LanguageAdventureStageView: View {
+    let language: String
     let stage: LanguageAdventureStage
     let index: Int
     let totalStageCount: Int
@@ -2708,7 +2888,7 @@ struct LanguageAdventureStageView: View {
                 progress.complete(stage: stage, index: index, totalStageCount: totalStageCount)
             })
         case .boss(let challenge):
-            CodingChallengeDetailView(challenge: challenge, onComplete: {
+            CodingChallengeDetailView(challenge: challenge, language: language, marksBossCompletion: true, onComplete: {
                 progress.complete(stage: stage, index: index, totalStageCount: totalStageCount)
             })
         }
