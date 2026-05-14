@@ -10,10 +10,14 @@ struct SettingsView: View {
         Form {
             Section("Appearance") {
                 Toggle("Dark Mode", isOn: $isDarkMode)
+                    .onChange(of: isDarkMode) { _, newValue in
+                        AppSound.toggle(newValue)
+                    }
             }
 
             Section("Help") {
                 Button {
+                    AppSound.tap()
                     hasSeenTutorial = false
                     NotificationCenter.default.post(name: .replayTutorial, object: nil)
                     tutorialConfirmed = true
@@ -40,6 +44,9 @@ struct SettingsView: View {
             
             Section("Developer") {
                 Toggle("Developer Mode", isOn: $isDeveloperMode)
+                    .onChange(of: isDeveloperMode) { _, newValue in
+                        AppSound.toggle(newValue)
+                    }
                 Text("Unlocks every SwiftUI adventure lesson for testing without completing the path.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
