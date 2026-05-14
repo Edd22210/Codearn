@@ -110,6 +110,7 @@ struct InteractiveLessonView: View {
     @State private var isCorrect = false
     @State private var showExplanation = false
     @State private var lessonComplete = false
+    @State private var lessonLoaded = false
     @Environment(\.dismiss) private var dismiss
     
     var step: LessonStep { lesson.steps[currentStep] }
@@ -118,6 +119,7 @@ struct InteractiveLessonView: View {
     private var currentPhase: LessonPhase {
         switch step {
         case .info(_, _, _, let code):
+            if currentStep == 0 { return .explain }
             return code == nil ? .explain : .example
         case .multipleChoice:
             return currentStep == lesson.steps.count - 1 ? .check : .task
@@ -128,18 +130,13 @@ struct InteractiveLessonView: View {
     
     private var lessonPhases: [LessonPhase] {
         var phases: [LessonPhase] = []
+        phases.append(.explain)
         
-        if lesson.steps.contains(where: { step in
-            if case .info(_, _, _, nil) = step { return true }
-            return false
-        }) {
-            phases.append(.explain)
-        }
-        
-        if lesson.steps.contains(where: { step in
+        let hasExampleStep = lesson.steps.contains { step in
             if case .info(_, _, _, .some) = step { return true }
             return false
-        }) {
+        }
+        if hasExampleStep {
             phases.append(.example)
         }
         
@@ -177,7 +174,7 @@ struct InteractiveLessonView: View {
         ZStack {
             AppTheme.background(isDarkMode: isDarkMode)
                 .ignoresSafeArea()
-
+            
             VStack(spacing: 0) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -217,6 +214,7 @@ struct InteractiveLessonView: View {
                             // Back button — only show after step 1
                             if currentStep > 0 {
                                 Button {
+                                    AppSound.tap()
                                     goBack()
                                 } label: {
                                     HStack(spacing: 6) {
@@ -244,9 +242,17 @@ struct InteractiveLessonView: View {
                     }
                 }
             }
+            .opacity(lessonLoaded ? 1 : 0)
+            .offset(y: lessonLoaded ? 0 : 16)
+            .animation(.easeOut(duration: 0.55), value: lessonLoaded)
         }
         .navigationTitle(lesson.title)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.55)) {
+                lessonLoaded = true
+            }
+        }
     }
     
     func infoStep(title: String, body: String, code: String?) -> some View {
@@ -273,19 +279,23 @@ struct InteractiveLessonView: View {
             Text(question).font(.title2).bold()
             ForEach(choices.indices, id: \.self) { i in
                 Button {
-                    if !answered {
-                        selectedChoice = i
-                        isCorrect = (i == correctIndex)
-                        answered = true
-                        showExplanation = true
-                    }
+                    AppSound.tap()
+                    selectedChoice = i
+                    isCorrect = (i == correctIndex)
+                    answered = true
+                    showExplanation = false
                 } label: {
                     HStack {
-                        Text(choices[i]).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode)).multilineTextAlignment(.leading)
+                        Text(choices[i])
+                            .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
+                            .multilineTextAlignment(.leading)
                         Spacer()
                         if answered {
-                            if i == correctIndex { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
-                            else if i == selectedChoice { Image(systemName: "xmark.circle.fill").foregroundStyle(.red) }
+                            if i == correctIndex {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            } else if i == selectedChoice {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                            }
                         }
                     }
                     .padding()
@@ -293,7 +303,8 @@ struct InteractiveLessonView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(choiceBorder(index: i, correct: correctIndex), lineWidth: 2))
                 }
-                .disabled(answered)
+                .disabled(isCorrect)
+                .buttonStyle(.plain)
             }
             if showExplanation {
                 HStack(alignment: .top, spacing: 10) {
@@ -337,7 +348,7 @@ struct InteractiveLessonView: View {
                         .background(answered ? (isCorrect ? Color.green.opacity(0.2) : Color.red.opacity(0.2)) : Color.blue.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(answered ? (isCorrect ? Color.green : Color.red) : Color.blue, lineWidth: 1.5))
-                        .disabled(answered)
+                        .disabled(answered && isCorrect)
                     Text(codeSuffix).font(.system(.body, design: .monospaced))
                 }
                 .padding()
@@ -345,7 +356,7 @@ struct InteractiveLessonView: View {
             .background(AppTheme.background(isDarkMode: isDarkMode))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             
-            if !answered {
+            if !answered || !isCorrect {
                 HStack {
                     Image(systemName: "questionmark.circle").foregroundStyle(.blue)
                     Text("Hint: \(hint)").font(.caption).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
@@ -435,17 +446,31 @@ struct InteractiveLessonView: View {
     
     var nextButton: some View {
         Button {
+            AppSound.next()
             switch step {
             case .info:
                 advance()
-            case .multipleChoice:
-                if answered { advance() }
+            case .multipleChoice(_, _, _, let correctIndex, _):
+                guard let selectedChoice else { return }
+                if selectedChoice == correctIndex {
+                    advance()
+                } else {
+                    AppSound.warning()
+                    isCorrect = false
+                    showExplanation = true
+                }
             case .fillBlank(_, _, _, let answer, _, _):
                 if !answered {
                     isCorrect = fillAnswer.trimmingCharacters(in: .whitespaces).lowercased() == answer.lowercased()
                     answered = true
-                } else {
+                    showExplanation = true
+                    if !isCorrect { AppSound.warning() }
+                } else if isCorrect {
                     advance()
+                } else {
+                    AppSound.tap()
+                    answered = false
+                    showExplanation = false
                 }
             }
         } label: {
@@ -465,19 +490,21 @@ struct InteractiveLessonView: View {
     var buttonLabel: String {
         switch step {
         case .info: return currentStep == lesson.steps.count - 1 ? "Finish" : "Continue"
-        case .multipleChoice: return answered ? (currentStep == lesson.steps.count - 1 ? "Finish" : "Next") : "Choose an answer"
+        case .multipleChoice:
+            if selectedChoice == nil { return "Choose an answer" }
+            return isCorrect ? (currentStep == lesson.steps.count - 1 ? "Finish" : "Next") : "Try Again"
         case .fillBlank:
             if !answered { return "Check Answer" }
-            return currentStep == lesson.steps.count - 1 ? "Finish" : "Next"
+            return isCorrect ? (currentStep == lesson.steps.count - 1 ? "Finish" : "Next") : "Try Again"
         }
     }
     
     var buttonEnabled: Bool {
         switch step {
         case .info: return true
-        case .multipleChoice: return answered
+        case .multipleChoice: return selectedChoice != nil
         case .fillBlank:
-            if answered { return true }
+            if answered && !isCorrect { return true }
             return !fillAnswer.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
@@ -494,7 +521,7 @@ struct InteractiveLessonView: View {
             showExplanation = false
         }
     }
-
+    
     func goBack() {
         guard currentStep > 0 else { return }
         currentStep -= 1
@@ -512,7 +539,10 @@ struct InteractiveLessonView: View {
             Text("Lesson Complete!").font(.largeTitle).bold()
             Text("You finished \"\(lesson.title)\".").font(.title3).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode)).multilineTextAlignment(.center)
             Spacer()
-            Button { dismiss() } label: {
+            Button {
+                AppSound.success()
+                dismiss()
+            } label: {
                 Text("Back to Lessons").bold()
                     .frame(maxWidth: .infinity).padding()
                     .background(Color.blue).foregroundStyle(.white)
@@ -565,10 +595,10 @@ struct CodingChallengeDetailView: View {
         ZStack {
             AppTheme.background(isDarkMode: isDarkMode)
                 .ignoresSafeArea()
-
+            
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                
+                    
                     // Header
                     HStack {
                         Image(systemName: challenge.icon).font(.title).foregroundStyle(.white)
@@ -583,13 +613,13 @@ struct CodingChallengeDetailView: View {
                         }
                         Spacer()
                     }
-                
+                    
                     Divider()
-                
+                    
                     // Description
                     Text("Challenge").font(.headline)
                     Text(challenge.description).font(.body).foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
-                
+                    
                     // Expected output
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Expected Output:").font(.headline)
@@ -603,16 +633,17 @@ struct CodingChallengeDetailView: View {
                     .padding()
                     .background(Color.green.opacity(0.07))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
-                
+                    
                     // Code Editor
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Your Code:").font(.headline)
                             Spacer()
-                            Button {
-                                userCode = challenge.starterCode
-                                submitted = false
-                                submissionPassed = false
+                    Button {
+                        AppSound.tap()
+                        userCode = challenge.starterCode
+                        submitted = false
+                        submissionPassed = false
                                 submissionMessage = ""
                                 showSolution = false
                             } label: {
@@ -630,17 +661,18 @@ struct CodingChallengeDetailView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.buttonBorder(isDarkMode: isDarkMode), lineWidth: 1))
                     }
-                
+                    
                     // Hints
                     if !challenge.hints.isEmpty {
                         Button {
+                            AppSound.tap()
                             withAnimation { showHints.toggle() }
                         } label: {
                             Label(showHints ? "Hide Hints" : "Show a Hint", systemImage: "lightbulb.fill")
                                 .font(.subheadline)
                                 .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
                         }
-                    
+                        
                         if showHints {
                             VStack(alignment: .leading, spacing: 10) {
                                 ForEach(0...currentHint, id: \.self) { i in
@@ -650,7 +682,10 @@ struct CodingChallengeDetailView: View {
                                     }
                                 }
                                 if currentHint < challenge.hints.count - 1 {
-                                    Button("Next Hint →") { currentHint += 1 }
+                                    Button("Next Hint →") {
+                                        AppSound.tap()
+                                        currentHint += 1
+                                    }
                                         .font(.caption)
                                         .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
                                 }
@@ -661,9 +696,10 @@ struct CodingChallengeDetailView: View {
                             .transition(.opacity)
                         }
                     }
-                
+                    
                     // Submit / Solution buttons
                     Button {
+                        AppSound.tap()
                         submitChallenge()
                     } label: {
                         Text("Submit Solution")
@@ -672,7 +708,7 @@ struct CodingChallengeDetailView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .disabled(userCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                
+                    
                     if submitted {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top, spacing: 8) {
@@ -687,15 +723,16 @@ struct CodingChallengeDetailView: View {
                         .background((submissionPassed ? Color.green : Color.red).opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                
+                    
                     Button {
+                        AppSound.tap()
                         withAnimation { showSolution.toggle() }
                     } label: {
                         Label(showSolution ? "Hide Solution" : "Show Solution", systemImage: "eye.fill")
                             .font(.subheadline)
                             .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
                     }
-                
+                    
                     if showSolution {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Solution:").font(.headline)
@@ -723,6 +760,11 @@ struct CodingChallengeDetailView: View {
         let result = validateChallengeCode(userCode)
         submissionPassed = result.isValid
         submissionMessage = result.message
+        if result.isValid {
+            AppSound.success()
+        } else {
+            AppSound.warning()
+        }
         
         if result.isValid {
             if let language {
@@ -1084,6 +1126,7 @@ struct ChallengesView: View {
                 }
                 .padding(.vertical, 4)
             }
+            .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
         }
         .navigationTitle("\(language) Challenges")
     }
@@ -1106,6 +1149,10 @@ struct LessonsView: View {
     @AppStorage("isDarkMode") private var isDarkMode = false
     
     var lessons: [Lesson] {
+        rawLessons.map(normalizedLesson)
+    }
+    
+    private var rawLessons: [Lesson] {
         switch language {
             
             // ── JAVA ──────────────────────────────────────────────
@@ -1277,12 +1324,160 @@ struct LessonsView: View {
         }
     }
     
+    private func normalizedLesson(_ lesson: Lesson) -> Lesson {
+        guard let explain = lesson.steps.first else { return lesson }
+        
+        let generatedExample = generatedExampleStep(for: lesson)
+        let remaining = Array(lesson.steps.dropFirst()).prefix(2)
+        let normalizedSteps = [explain, generatedExample] + remaining
+        
+        return Lesson(title: lesson.title, icon: lesson.icon, steps: Array(normalizedSteps.prefix(4)))
+    }
+    
+    private func generatedExampleStep(for lesson: Lesson) -> LessonStep {
+        let example: (body: String, code: String)
+
+        switch (language, lesson.title) {
+        case ("Java", "What is Java?"):
+            example = (
+                body: "This full Java starter program defines a class, main method, and prints output to the console.",
+                code: "public class HelloCodearn {\n    public static void main(String[] args) {\n        System.out.println(\"Welcome to Java!\");\n    }\n}"
+            )
+        case ("Java", "Variables"):
+            example = (
+                body: "This example declares common Java variable types and prints one of them.",
+                code: "int score = 95;\nString name = \"Maya\";\nboolean isReady = true;\ndouble gpa = 3.7;\n\nSystem.out.println(name + \" scored \" + score);"
+            )
+        case ("Java", "If / Else"):
+            example = (
+                body: "This condition checks a score and prints a different message depending on the result.",
+                code: "int score = 72;\nif (score >= 70) {\n    System.out.println(\"Pass\");\n} else {\n    System.out.println(\"Try again\");\n}"
+            )
+        case ("Java", "Loops"):
+            example = (
+                body: "A for-loop repeats code a fixed number of times and tracks the index with i.",
+                code: "for (int i = 1; i <= 3; i++) {\n    System.out.println(\"Round \" + i);\n}"
+            )
+        case ("Java", "Methods"):
+            example = (
+                body: "This method takes parameters, returns a value, and is called from main.",
+                code: "public static int multiply(int a, int b) {\n    return a * b;\n}\n\nint result = multiply(4, 6);\nSystem.out.println(result); // 24"
+            )
+        case ("Java", "Arrays"):
+            example = (
+                body: "An array stores multiple values, and each item is accessed with a zero-based index.",
+                code: "int[] levels = {1, 2, 3, 4};\nSystem.out.println(levels[0]); // 1\nSystem.out.println(levels[3]); // 4\nSystem.out.println(levels.length); // 4"
+            )
+
+        case ("Swift UI", "What is SwiftUI?"):
+            example = (
+                body: "This simple SwiftUI view returns UI from body using a text label and padding.",
+                code: "struct WelcomeView: View {\n    var body: some View {\n        Text(\"Hello, Codearn\")\n            .padding()\n    }\n}"
+            )
+        case ("Swift UI", "Modifiers"):
+            example = (
+                body: "Modifiers are chained to style the same view with font, color, and spacing.",
+                code: "Text(\"Level Up\")\n    .font(.title2)\n    .bold()\n    .foregroundStyle(.blue)\n    .padding()"
+            )
+        case ("Swift UI", "Buttons & State"):
+            example = (
+                body: "This button updates @State so the UI refreshes every time it is tapped.",
+                code: "struct TapCounter: View {\n    @State private var taps = 0\n\n    var body: some View {\n        Button(\"Taps: \\(taps)\") {\n            taps += 1\n        }\n    }\n}"
+            )
+        case ("Swift UI", "Stacks"):
+            example = (
+                body: "A VStack lays views vertically, while spacing controls the distance between them.",
+                code: "VStack(spacing: 10) {\n    Text(\"Top\")\n    Text(\"Middle\")\n    Text(\"Bottom\")\n}"
+            )
+        case ("Swift UI", "Lists & Navigation"):
+            example = (
+                body: "NavigationStack + List + NavigationLink builds a scrollable menu of destinations.",
+                code: "NavigationStack {\n    List([\"Swift\", \"Python\"], id: \\.self) { language in\n        NavigationLink(language) {\n            Text(\"Selected: \\(language)\")\n        }\n    }\n    .navigationTitle(\"Languages\")\n}"
+            )
+        case ("Swift UI", "Images & SF Symbols"):
+            example = (
+                body: "Use Image(systemName:) with font and color modifiers to render SF Symbols cleanly.",
+                code: "Image(systemName: \"wifi\")\n    .font(.system(size: 40, weight: .bold))\n    .foregroundStyle(.blue)"
+            )
+
+        case ("Python", "What is Python?"):
+            example = (
+                body: "This script uses print() to output text and shows Python's clean syntax.",
+                code: "message = \"Welcome to Python\"\nprint(message)\nprint(\"Let's build!\")"
+            )
+        case ("Python", "Variables"):
+            example = (
+                body: "Python variables are created directly with = and can store different types.",
+                code: "name = \"Kai\"\nscore = 88\ngpa = 3.9\nis_ready = True\n\nprint(name, score)"
+            )
+        case ("Python", "If / Else"):
+            example = (
+                body: "This if/else block checks a condition and branches based on the value.",
+                code: "level = 4\nif level >= 5:\n    print(\"Advanced\")\nelse:\n    print(\"Keep training\")"
+            )
+        case ("Python", "Loops"):
+            example = (
+                body: "A for-loop with range iterates predictable values and repeats a task.",
+                code: "for i in range(1, 4):\n    print(f\"Lap {i}\")"
+            )
+        case ("Python", "Functions"):
+            example = (
+                body: "Functions are defined with def and can return computed values.",
+                code: "def add(a, b):\n    return a + b\n\nresult = add(5, 7)\nprint(result)  # 12"
+            )
+        case ("Python", "Lists"):
+            example = (
+                body: "Lists hold many values. You can append new items and read by index.",
+                code: "tools = [\"VS Code\", \"Xcode\"]\ntools.append(\"Terminal\")\nprint(tools[1])\nprint(len(tools))"
+            )
+
+        case ("HTML", "What is HTML?"):
+            example = (
+                body: "This minimal page shows core HTML structure with headings and paragraph content.",
+                code: "<!doctype html>\n<html>\n  <body>\n    <h1>Codearn</h1>\n    <p>Learn by building.</p>\n  </body>\n</html>"
+            )
+        case ("HTML", "Headings & Paragraphs"):
+            example = (
+                body: "Headings define hierarchy and paragraphs hold readable body text.",
+                code: "<h1>My Portfolio</h1>\n<h2>About Me</h2>\n<p>I enjoy building apps and websites.</p>"
+            )
+        case ("HTML", "Links & Images"):
+            example = (
+                body: "A link uses href and an image uses src + alt for accessibility.",
+                code: "<a href=\"https://developer.apple.com\">Apple Dev</a>\n<img src=\"profile.png\" alt=\"Profile photo\">"
+            )
+        case ("HTML", "Lists"):
+            example = (
+                body: "Use unordered lists for bullets and <li> for each list item.",
+                code: "<ul>\n  <li>Swift</li>\n  <li>Python</li>\n  <li>HTML</li>\n</ul>"
+            )
+        case ("HTML", "Tables"):
+            example = (
+                body: "Tables organize row/column data using <tr>, <th>, and <td>.",
+                code: "<table>\n  <tr><th>Name</th><th>XP</th></tr>\n  <tr><td>Ana</td><td>420</td></tr>\n</table>"
+            )
+        case ("HTML", "Forms"):
+            example = (
+                body: "Forms collect user input with fields and a submit button.",
+                code: "<form>\n  <input type=\"text\" placeholder=\"Username\">\n  <input type=\"password\" placeholder=\"Password\">\n  <button type=\"submit\">Log In</button>\n</form>"
+            )
+
+        default:
+            example = (
+                body: "This worked example reinforces the lesson with a concrete snippet.",
+                code: "// Example for \(lesson.title)"
+            )
+        }
+
+        return .info(title: "Worked Example", body: example.body, code: example.code)
+    }
+    
     var body: some View {
         ZStack {
             LinearGradient(
                 colors: isDarkMode
-                    ? [Color.black, Color(red: 0.06, green: 0.06, blue: 0.17)]
-                    : [Color(red: 0.98, green: 0.99, blue: 1.0), Color(red: 0.87, green: 0.93, blue: 1.0)],
+                ? [Color.black, Color(red: 0.06, green: 0.06, blue: 0.17)]
+                : [Color(red: 0.98, green: 0.99, blue: 1.0), Color(red: 0.87, green: 0.93, blue: 1.0)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -1327,6 +1522,7 @@ struct LessonsView: View {
                             lessonSelectionCard(lesson: lesson, index: lessonIndex)
                         }
                         .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
                     }
                 }
                 .padding()
@@ -1421,6 +1617,7 @@ struct LanguageDropdownContent: View {
                         .font(.title3).bold()
                 }
             }
+            .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
             
             NavigationLink(destination: ChallengesView(language: language)) {
                 ZStack {
@@ -1432,6 +1629,7 @@ struct LanguageDropdownContent: View {
                         .font(.title3).bold()
                 }
             }
+            .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
         }
         .padding(.vertical, 12)
         .frame(maxWidth: languageDropdownMaxWidth)
@@ -1593,7 +1791,7 @@ private let swiftUIAdventureNodes: [SwiftUIAdventureNode] = [
         exampleCode: """
         struct CounterView: View {
             @State private var count = 0
-
+        
             var body: some View {
                 Button("Tap: \\(count)") {
                     count += 1
@@ -1625,7 +1823,7 @@ private let swiftUIAdventureNodes: [SwiftUIAdventureNode] = [
             Text("Top")
             Text("Bottom")
         }
-
+        
         HStack {
             Text("Left")
             Text("Right")
@@ -1747,7 +1945,8 @@ private let swiftUIAdventureNodes: [SwiftUIAdventureNode] = [
 
 struct SwiftUIAdventureEntryView: View {
     @Binding var progress: SwiftUIAdventureProgress
-
+    @State private var showEntry = false
+    
     var body: some View {
         NavigationLink(destination: SwiftUIAdventureMapView(progress: $progress)) {
             VStack(alignment: .leading, spacing: 14) {
@@ -1761,7 +1960,7 @@ struct SwiftUIAdventureEntryView: View {
                             .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
                     }
-
+                    
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Text("SwiftUI Adventure")
@@ -1779,17 +1978,17 @@ struct SwiftUIAdventureEntryView: View {
                             .font(.subheadline)
                             .foregroundStyle(Color.white.opacity(0.82))
                     }
-
+                    
                     Spacer()
                 }
-
+                
                 // Stat pills
                 HStack(spacing: 10) {
                     adventureStatPill(title: "XP", value: "\(progress.xp)")
                     adventureStatPill(title: "Stages", value: "\(swiftUIAdventureNodes.count)")
                     adventureStatPill(title: "Bosses", value: "\(swiftUIAdventureNodes.filter(\.isBoss).count)")
                 }
-
+                
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.caption.bold())
@@ -1817,9 +2016,10 @@ struct SwiftUIAdventureEntryView: View {
             )
             .shadow(color: Color.pink.opacity(0.4), radius: 16, y: 8)
         }
+        .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
         .buttonStyle(.plain)
     }
-
+    
     private func adventureStatPill(title: String, value: String) -> some View {
         VStack(spacing: 4) {
             Text(value)
@@ -1840,13 +2040,14 @@ struct SwiftUIAdventureMapView: View {
     @Binding var progress: SwiftUIAdventureProgress
     @AppStorage("isDarkMode") private var isDarkMode = false
     @AppStorage("isDeveloperMode") private var isDeveloperMode = false
+    @State private var showMap = false
     
     var body: some View {
         ZStack {
             LinearGradient(
                 colors: isDarkMode
-                    ? [Color.black, Color(red: 0.06, green: 0.06, blue: 0.17)]
-                    : [Color(red: 0.98, green: 0.99, blue: 1.0), Color(red: 0.87, green: 0.93, blue: 1.0)],
+                ? [Color.black, Color(red: 0.06, green: 0.06, blue: 0.17)]
+                : [Color(red: 0.98, green: 0.99, blue: 1.0), Color(red: 0.87, green: 0.93, blue: 1.0)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -1867,12 +2068,21 @@ struct SwiftUIAdventureMapView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!isNodeUnlocked(index: index))
+                        .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
                     }
                 }
                 .padding()
+                .opacity(showMap ? 1 : 0)
+                .offset(y: showMap ? 0 : 18)
+                .animation(.easeOut(duration: 0.55), value: showMap)
             }
         }
         .navigationTitle("SwiftUI Arcade")
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.6)) {
+                showMap = true
+            }
+        }
     }
     
     private var adventureHUD: some View {
@@ -2567,11 +2777,11 @@ private func adventureStages(for language: String) -> [LanguageAdventureStage] {
 struct LanguageAdventureEntryView: View {
     let language: String
     @Binding var progress: LanguageAdventureProgress
-
+    
     private var stages: [LanguageAdventureStage] {
         adventureStages(for: language)
     }
-
+    
     // Per-language hacker identity
     private var cardConfig: (gradient: [Color], glow: Color, icon: String, tag: String, subtitle: String) {
         switch language {
@@ -2612,7 +2822,7 @@ struct LanguageAdventureEntryView: View {
             )
         }
     }
-
+    
     var body: some View {
         let config = cardConfig
         NavigationLink(destination: LanguageAdventureMapView(language: language, progress: $progress)) {
@@ -2628,7 +2838,7 @@ struct LanguageAdventureEntryView: View {
                             .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
                     }
-
+                    
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Text("\(language) Adventure")
@@ -2646,17 +2856,17 @@ struct LanguageAdventureEntryView: View {
                             .font(.subheadline)
                             .foregroundStyle(Color.white.opacity(0.82))
                     }
-
+                    
                     Spacer()
                 }
-
+                
                 // Stat pills
                 HStack(spacing: 10) {
                     adventureEntryPill(title: "XP", value: "\(progress.xp)")
                     adventureEntryPill(title: "Stages", value: "\(stages.count)")
                     adventureEntryPill(title: "Bosses", value: "\(stages.filter(\.isBoss).count)")
                 }
-
+                
                 // Next stop
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.right.circle.fill")
@@ -2684,9 +2894,10 @@ struct LanguageAdventureEntryView: View {
             )
             .shadow(color: config.glow.opacity(0.35), radius: 16, y: 8)
         }
+        .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
         .buttonStyle(.plain)
     }
-
+    
     private func adventureEntryPill(title: String, value: String) -> some View {
         VStack(spacing: 4) {
             Text(value)
@@ -2718,8 +2929,8 @@ struct LanguageAdventureMapView: View {
         ZStack {
             LinearGradient(
                 colors: isDarkMode
-                    ? [Color.black, Color(red: 0.06, green: 0.06, blue: 0.17)]
-                    : [Color(red: 0.98, green: 0.99, blue: 1.0), Color(red: 0.87, green: 0.93, blue: 1.0)],
+                ? [Color.black, Color(red: 0.06, green: 0.06, blue: 0.17)]
+                : [Color(red: 0.98, green: 0.99, blue: 1.0), Color(red: 0.87, green: 0.93, blue: 1.0)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -2740,6 +2951,7 @@ struct LanguageAdventureMapView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!isStageUnlocked(index: stageIndex))
+                        .simultaneousGesture(TapGesture().onEnded { AppSound.tap() })
                     }
                 }
                 .padding()
@@ -2913,7 +3125,7 @@ struct LanguageView: View {
             ZStack {
                 AppTheme.background(isDarkMode: isDarkMode)
                     .ignoresSafeArea()
-
+                
                 ScrollView {
                     VStack(spacing: 0) {
                         hackerLanguageRow(
@@ -2924,9 +3136,9 @@ struct LanguageView: View {
                             LanguageAdventureEntryView(language: "Java", progress: $javaProgress)
                                 .padding(.bottom, 14)
                         }
-
+                        
                         hackerDivider
-
+                        
                         hackerLanguageRow(
                             label: "Swift UI",
                             icon: "swift",
@@ -2935,9 +3147,9 @@ struct LanguageView: View {
                             SwiftUIAdventureEntryView(progress: $swiftUIProgress)
                                 .padding(.bottom, 14)
                         }
-
+                        
                         hackerDivider
-
+                        
                         hackerLanguageRow(
                             label: "Python",
                             icon: "apple.terminal.fill",
@@ -2946,9 +3158,9 @@ struct LanguageView: View {
                             LanguageAdventureEntryView(language: "Python", progress: $pythonProgress)
                                 .padding(.bottom, 14)
                         }
-
+                        
                         hackerDivider
-
+                        
                         hackerLanguageRow(
                             label: "HTML",
                             icon: "chevron.left.forwardslash.chevron.right",
@@ -2957,7 +3169,7 @@ struct LanguageView: View {
                             LanguageAdventureEntryView(language: "HTML", progress: $htmlProgress)
                                 .padding(.bottom, 14)
                         }
-
+                        
                         hackerDivider
                     }
                     .padding(.top, 8)
@@ -2966,16 +3178,16 @@ struct LanguageView: View {
             .navigationTitle("Languages")
         }
     }
-
+    
     // MARK: - Hacker helpers
-
+    
     private var hackerDivider: some View {
         Rectangle()
             .fill(AppTheme.accent(isDarkMode: isDarkMode).opacity(0.25))
             .frame(maxWidth: languageDropdownMaxWidth, maxHeight: 1)
             .padding(.horizontal)
     }
-
+    
     private func hackerLanguageRow<Content: View>(
         label: String,
         icon: String,
@@ -3001,13 +3213,13 @@ struct LanguageView: View {
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(AppTheme.accent(isDarkMode: isDarkMode))
                     }
-
+                    
                     Text(label)
                         .font(.system(.title2, design: .monospaced, weight: .bold))
                         .foregroundStyle(AppTheme.text(isDarkMode: isDarkMode))
-
+                    
                     Spacer()
-
+                    
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(AppTheme.accent(isDarkMode: isDarkMode).opacity(0.7))
@@ -3020,7 +3232,7 @@ struct LanguageView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
+            
             if isExpanded.wrappedValue {
                 content()
                     .padding(.horizontal, 20)
