@@ -46,16 +46,22 @@ enum AppTheme {
 
 enum AppSound {
     private static let player = TonePlayer()
+    private static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: "isSoundEnabled") as? Bool ?? true
+    }
 
     static func tap() {
+        guard isEnabled else { return }
         player.play(frequency: 420, duration: 0.03, volume: 0.10)
     }
 
     static func next() {
+        guard isEnabled else { return }
         player.play(frequency: 340, duration: 0.028, volume: 0.09)
     }
     
     static func success() {
+        guard isEnabled else { return }
         player.playSequence([
             (frequency: 520, duration: 0.05, volume: 0.2),
             (frequency: 660, duration: 0.07, volume: 0.2)
@@ -63,6 +69,7 @@ enum AppSound {
     }
     
     static func warning() {
+        guard isEnabled else { return }
         player.playSequence([
             (frequency: 320, duration: 0.06, volume: 0.2),
             (frequency: 260, duration: 0.08, volume: 0.22)
@@ -70,6 +77,7 @@ enum AppSound {
     }
     
     static func toggle(_ isOn: Bool) {
+        guard isEnabled else { return }
         player.play(frequency: isOn ? 500 : 380, duration: 0.035, volume: 0.11)
     }
 }
